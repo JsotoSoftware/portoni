@@ -5,10 +5,15 @@ import (
 	"io"
 	"log"
 	"net"
+
+	"github.com/JsotoSoftware/portoni/config"
 )
 
 func openTunnel() {
-	serverConn, err := net.Dial("tcp", "localhost:9091")
+	tunnelPort := config.Get("TUNNEL_PORT", "9091")
+	serverHost := config.Get("SERVER_HOST", "localhost")
+
+	serverConn, err := net.Dial("tcp", fmt.Sprintf("%s:%s", serverHost, tunnelPort))
 	if err != nil {
 		log.Println("Failed to connect to tunnel port:", err)
 		return
@@ -17,7 +22,7 @@ func openTunnel() {
 
 	fmt.Println("Tunnel connection established")
 
-	localConn, err := net.Dial("tcp", "localhost:3000")
+	localConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", serverHost, localPort))
 	if err != nil {
 		log.Println("Failed to connect to local service:", err)
 		serverConn.Close()

@@ -1,34 +1,85 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
+	"strings"
 	"sync"
+	"time"
+
+	"github.com/JsotoSoftware/portoni/config"
 )
+
+type TunnelClient struct {
+	conn      net.Conn
+	localPort int
+}
 
 var (
 	controlConn    net.Conn
 	controlLock    sync.Mutex
 	tunnelConnChan = make(chan net.Conn)
+	tunnelRegistry = make(map[string]TunnelClient)
+	tunnelMutex    = sync.Mutex{}
 )
 
 func handleControlConnection(conn net.Conn) {
-	controlLock.Lock()
-	controlConn = conn
-	controlLock.Unlock()
-	fmt.Println("Tunnel client connected to control port")
+	reader := bufio.NewReader(conn)
+
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		log.Println("Failed to read registration message:", err)
+		conn.Close()
+		return
+	}
+
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "REGISTER") {
+		log.Println("Invalid registration message:", line)
+		conn.Close()
+		return
+	}
+
+	var localPort int
+	fmt.Sscanf(line, "REGISTER %d", &localPort)
+
+	tunnelID := generateTunnelID()
+
+	tunnelMutex.Lock()
+	tunnelRegistry[tunnelID] = TunnelClient{
+		conn:      conn,
+		localPort: localPort,
+	}
+	tunnelMutex.Unlock()
+
+	fmt.Fprintf(conn, "%s\n", tunnelID)
+	log.Printf("Registered new tunnel: %s → localhost:%d\n", tunnelID, localPort)
+
+	for {
+		_, err := reader.ReadString('\n')
+		if err != nil {
+			log.Printf("Tunnel %s disconnected.\n", tunnelID)
+			tunnelMutex.Lock()
+			delete(tunnelRegistry, tunnelID)
+			tunnelMutex.Unlock()
+			return
+		}
+	}
 }
 
 func listenControlPort() {
-	listener, err := net.Listen("tcp", ":9090")
+	controlPort := config.Get("CONTROL_PORT", "9090")
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", controlPort))
 	if err != nil {
-		log.Fatal("Failed to listen to 9090:", err)
+		log.Fatal("Failed to listen to control port:", err)
 	}
 	defer listener.Close()
 
-	fmt.Println("Control port listening on :9090")
+	fmt.Printf("Control port listening on %s\n", controlPort)
 
 	for {
 		conn, err := listener.Accept()
@@ -41,13 +92,14 @@ func listenControlPort() {
 }
 
 func acceptTunnelConnections() {
-	listener, err := net.Listen("tcp", ":9091")
+	tunnelPort := config.Get("TUNNEL_PORT", "9091")
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", tunnelPort))
 	if err != nil {
-		log.Fatal("Failed to listen to 9091:", err)
+		log.Fatal("Failed to listen to tunnel port:", err)
 	}
 	defer listener.Close()
 
-	fmt.Println("Tunnel port listening on :9091")
+	fmt.Printf("Tunnel port listening on %s\n", tunnelPort)
 
 	for {
 		tunnelConn, err := listener.Accept()
@@ -60,13 +112,14 @@ func acceptTunnelConnections() {
 }
 
 func listenPublicPort() {
-	listener, err := net.Listen("tcp", ":8080")
+	publicPort := config.Get("PUBLIC_PORT", "8080")
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", publicPort))
 	if err != nil {
-		log.Fatal("Failed to listen to 8080:", err)
+		log.Fatal("Failed to listen to public port:", err)
 	}
 	defer listener.Close()
 
-	fmt.Println("Public server listening on :8080")
+	fmt.Printf("Public server listening on %s\n", publicPort)
 
 	for {
 		publicConn, err := listener.Accept()
@@ -105,7 +158,20 @@ func listenPublicPort() {
 	}
 }
 
+func generateTunnelID() string {
+	rand.Seed(time.Now().UnixNano())
+	letters := []rune("abcdefghijklmnopqrstuvwxyz0123456789")
+	id := make([]rune, 6)
+	for i := range id {
+		id[i] = letters[rand.Intn(len(letters))]
+	}
+
+	return string(id)
+}
+
 func main() {
+	config.Load()
+
 	go listenControlPort()
 	go acceptTunnelConnections()
 	go listenPublicPort()
