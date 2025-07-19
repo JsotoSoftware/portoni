@@ -17,11 +17,12 @@ func handleControl() {
 	serverHost := config.Get("SERVER_HOST", "localhost")
 	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%s", serverHost, controlPort))
 	if err != nil {
-		log.Fatal("Failed to connect to tunnel server control port:", controlPort, err)
+		log.Println("Failed to connect to tunnel server control port:", err)
+		return
 	}
 	defer conn.Close()
 
-	fmt.Println("Connected to server control port")
+	fmt.Printf("Connected to server control port %s and server host %s\n", controlPort, serverHost)
 
 	fmt.Fprintf(conn, "REGISTER %d\n", localPort)
 
@@ -29,7 +30,7 @@ func handleControl() {
 
 	line, err := reader.ReadString('\n')
 	if err != nil {
-		log.Fatal("Failed to receive tunnel ID:", err)
+		log.Println("Failed to receive tunnel ID:", err)
 		return
 	}
 

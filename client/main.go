@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"time"
 
 	"github.com/JsotoSoftware/portoni/config"
 )
@@ -17,5 +18,9 @@ func main() {
 
 	fmt.Println("Tunnel client started, forwarding traffic to port", localPort)
 
-	handleControl()
+	for {
+		handleControl()
+		fmt.Println("Disconnected from server, reconnecting in 5 seconds...")
+		time.Sleep(5 * time.Second)
+	}
 }

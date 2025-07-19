@@ -10,28 +10,40 @@ import (
 )
 
 func openTunnel() {
-	tunnelPort := config.Get("TUNNEL_PORT", "9091")
+	tunnelPort := config.Get("TUNNEL_PORT", "2001")
 	serverHost := config.Get("SERVER_HOST", "localhost")
 
 	serverConn, err := net.Dial("tcp", fmt.Sprintf("%s:%s", serverHost, tunnelPort))
 	if err != nil {
-		log.Println("Failed to connect to tunnel port:", err)
+		log.Println("❌ Failed to connect to tunnel port:", err)
 		return
 	}
-	defer serverConn.Close()
+	log.Println("✅ Tunnel connection established")
 
-	fmt.Println("Tunnel connection established")
-
-	localConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", serverHost, localPort))
+	localConn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", localPort))
 	if err != nil {
-		log.Println("Failed to connect to local service:", err)
+		log.Println("❌ Failed to connect to local service on localhost:", localPort, err)
 		serverConn.Close()
 		return
 	}
-	defer localConn.Close()
+	log.Println("✅ Local service connection established")
 
-	fmt.Println("Local service connection established")
+	// Start bidirectional streaming
+	go func() {
+		defer localConn.Close()
+		defer serverConn.Close()
+		_, err := io.Copy(localConn, serverConn)
+		if err != nil {
+			log.Println("Error copying server → local:", err)
+		}
+	}()
 
-	go io.Copy(localConn, serverConn)
-	io.Copy(serverConn, localConn)
+	go func() {
+		defer localConn.Close()
+		defer serverConn.Close()
+		_, err := io.Copy(serverConn, localConn)
+		if err != nil {
+			log.Println("Error copying local → server:", err)
+		}
+	}()
 }

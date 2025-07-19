@@ -56,6 +56,10 @@ func handleControlConnection(conn net.Conn) {
 	}
 	tunnelMutex.Unlock()
 
+	controlLock.Lock()
+	controlConn = conn
+	controlLock.Unlock()
+
 	fmt.Fprintf(conn, "%s\n", tunnelID)
 	log.Printf("Registered new tunnel: %s → localhost:%d\n", tunnelID, localPort)
 
@@ -66,6 +70,14 @@ func handleControlConnection(conn net.Conn) {
 			tunnelMutex.Lock()
 			delete(tunnelRegistry, tunnelID)
 			tunnelMutex.Unlock()
+
+			controlLock.Lock()
+			if controlConn == conn {
+				controlConn = nil
+			}
+			controlLock.Unlock()
+
+			conn.Close()
 			return
 		}
 	}
@@ -129,28 +141,29 @@ func listenPublicPort() {
 		}
 
 		go func(publicConn net.Conn) {
+			defer publicConn.Close()
 			fmt.Println("Public request received, Sending REQ to client...")
 
 			controlLock.Lock()
 			if controlConn == nil {
 				log.Println("No control connection available")
-				publicConn.Close()
 				controlLock.Unlock()
 				return
 			}
 
 			_, err := controlConn.Write([]byte("REQ\n"))
-			controlLock.Unlock()
-
 			if err != nil {
 				log.Println("Error sending REQ to client:", err)
-				publicConn.Close()
+				controlConn = nil
+				controlLock.Unlock()
 				return
 			}
+			controlLock.Unlock()
 
 			tunnelConn := <-tunnelConnChan
+			defer tunnelConn.Close()
 
-			fmt.Println("Tunnel connection established, forwarding traffic...")
+			fmt.Println("✅ Tunnel connection established, forwarding traffic...")
 
 			go io.Copy(tunnelConn, publicConn)
 			io.Copy(publicConn, tunnelConn)
@@ -161,12 +174,22 @@ func listenPublicPort() {
 func generateTunnelID() string {
 	rand.Seed(time.Now().UnixNano())
 	letters := []rune("abcdefghijklmnopqrstuvwxyz0123456789")
-	id := make([]rune, 6)
-	for i := range id {
-		id[i] = letters[rand.Intn(len(letters))]
-	}
 
-	return string(id)
+	for {
+		id := make([]rune, 6)
+		for i := range id {
+			id[i] = letters[rand.Intn(len(letters))]
+		}
+		tunnelID := string(id)
+
+		tunnelMutex.Lock()
+		_, exists := tunnelRegistry[tunnelID]
+		tunnelMutex.Unlock()
+
+		if !exists {
+			return tunnelID
+		}
+	}
 }
 
 func main() {
@@ -176,6 +199,5 @@ func main() {
 	go acceptTunnelConnections()
 	go listenPublicPort()
 
-	// Keep the main thread alive
 	select {}
 }
